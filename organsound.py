@@ -4,6 +4,7 @@ import pyfs
 import sys
 import os.path
 import time
+import copy
 import ConfigParser
 import getopt
 import paho.mqtt.client as mqtt
@@ -34,8 +35,7 @@ class OrganServer:
         mlist = config.get(localsection, "modes")
         self.modes = mlist.split(",")
         self.set_instrument(self.modeindex)
-        self.shiftkey = 37  # Bottom C#
-        self.shiftstart = LAST_KEY - self.num_stops
+        self.transposeamount = 0
 
     def set_instrument(self, n):
         self.all_off()
@@ -69,14 +69,14 @@ class OrganServer:
             channel = self.channels[channel]
             if self.debug:
                 print "SOUND: Start playing channel ", channel, ", note ", note
-            fs.noteon(channel, note, velocity)
+            fs.noteon(channel, note + self.transposeamount, velocity)
 
     def stop_note(self, channel, note):
         if (note >= 0) and (note < NUM_KEYS):
             channel = self.channels[channel]
             if self.debug:
                 print "SOUND: Stop playing channel ", channel, ", note ", note
-            fs.noteoff(channel, note)
+            fs.noteoff(channel, note + self.transposeamount)
 
     def find_changes(self):
         # Loop through each key
@@ -125,9 +125,6 @@ class OrganServer:
         if self.debug:
             print "SOUND: Note " + str(note) + " down on keyboard " + str(keyboard)
         self.allkeys[keyboard][note] = 1
-        # 'Shift key' stop mechanism
-        if (self.allkeys[keyboard][self.shiftkey] == 1) and (note >= self.shiftstart):
-            self.toggle_stop(note - self.shiftstart)
 
     def keyboard_key_up(self, keyboard, note):
         if self.debug:
@@ -140,6 +137,21 @@ class OrganServer:
                 self.allkeys[k][n] = 0
         for s in range(0, len(self.stops)):
             self.stops[s] = 0
+
+    def transpose(self, t):
+        if self.debug:
+            print "SOUND: Transpose by " + str(t)
+        # Copy key state
+        oldkeys = copy.deepcopy(self.allkeys)
+        # Stop playing existing notes
+        for k in range(0, num_keyboards):
+            for n in range(FIRST_KEY, LAST_KEY):
+                self.allkeys[k][n] = 0
+        self.find_changes()
+        # Copy key state back ready to restart notes
+        self.allkeys = copy.deepcopy(oldkeys)
+        self.transposeamount = t
+
 
 
 if __name__ == "__main__":
@@ -202,6 +214,10 @@ if __name__ == "__main__":
                 sorgan.all_off()
                 sorgan.find_changes()
                 sorgan.set_instrument(n)
+                del pieces[0]
+            if cmd == "T":
+                t = int(pieces[0])
+                sorgan.transpose(t)
                 del pieces[0]
         # Handle the state changes
         sorgan.find_changes()

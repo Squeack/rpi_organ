@@ -55,6 +55,7 @@ class OrganClient:
         self.config = ConfigParser.SafeConfigParser()
         self.presetbin = 0
         self.notecheck = ""
+        self.transposeamount = 0
 
         self.read_config(configfile)
         self.hardware_initialise()
@@ -357,7 +358,17 @@ class OrganClient:
     def change_mode(self, m):
         self.modeindex = m % len(self.modes)
         self.load_instrument_config(self.modes[self.modeindex])
-        self.mqttpublish("M {}".format(self.modeindex), self.topic[self.thiskeyboard])
+        data = "M {}".format(self.modeindex)
+        for i in range(0, len(self.topic)):
+            self.mqttpublish(data, self.topic[i])
+
+    # Change transpose offset
+    def transpose(self, t):
+        self.transposeamount = t
+        data = "T {} ".format(t)
+        for i in range(0, len(self.topic)):
+            self.mqttpublish(data, self.topic[i])
+
 
     # Handle a hardcoded special preset action
     # e.g. Changing mode
@@ -371,6 +382,12 @@ class OrganClient:
             if i == 1:
                 # Next mode
                 self.change_mode(self.modeindex + 1)
+            if i == 2:
+                # Transpose down
+                self.transpose(self.transposeamount - 1)
+            if i== 3:
+                # Transpose up
+                self.transpose(self.transposeamount + 1)
 
     # Report on the current configuration
     def print_status(self):
