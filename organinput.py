@@ -554,6 +554,9 @@ class OrganClient:
             if self.autopedalactive:
                 pedalswitch = ""
                 lownote = self.lowest_note_pressed()
+                if lownote >= 32:
+                    # Only 32 notes on pedalboard
+                    lownote = -1
                 if lownote != self.pedalnote:
                     # Stop existing note
                     if self.pedalnote >= 0:
