@@ -15,6 +15,7 @@ def tobin(x, count=8):
 
 CYCLESNOOZE = 0.003
 
+
 class OrganClient:
     def __init__(self, configfile, verbose_flag, debug_flag):
         self.verbose = verbose_flag
@@ -43,8 +44,11 @@ class OrganClient:
         self.presetonlist = []
         self.presetofflist = []
         self.presetaction = []
-        self.stoptrigger = []
+        self.stoptrigger = []  # Has a stop button been pressed this cycle
         self.numcouplers = 0
+        self.autopedalstop = -1
+        self.autopedalactive = False
+        self.pedalnote = -1
         self.coupleroffset = 0
         self.couplertopics = []
         self.flakyswitches = False
@@ -64,8 +68,8 @@ class OrganClient:
         else:
             self.notestate = "0" * 32
         self.oldnotestate = self.notestate
-        self.stopstate = [0L] * (self.numstopio * 8)
-        self.buttonstate = [False] * (self.numstopio * 8)
+        self.stopstate = [0L] * (self.numstopio * 8)  # Stores the states of the stops
+        self.buttonstate = [False] * (self.numstopio * 8)  # Stores the transient state of the physical stop buttons
         self.stoptriggertime = [time.time()] * (self.numstopio * 8)
         if self.numpresets > 0:
             self.pbuttonstate = [False] * self.numpresets
@@ -186,7 +190,7 @@ class OrganClient:
             if self.debug:
                 print "Comparing {} with {}".format(oldnotecheck, nstate)
             newnstate = ""
-            for p in range(0,len(nstate)):
+            for p in range(0, len(nstate)):
                 if nstate[p] == "1" and oldnotecheck[p] == "1":
                     newnstate += "1"
                 else:
@@ -340,6 +344,7 @@ class OrganClient:
                     self.presetonlist.append(map(int, plist.split(",")))
                     plist = self.config.get(self.localconfig + inst, "preset{}offlist".format(n))
                     self.presetofflist.append(map(int, plist.split(",")))
+            self.autopedalstop = self.config.getint(self.localconfig + inst, "autopedal")
             clist = self.config.get(self.localconfig + inst, "couplers")
             couplers = map(int, clist.split(","))
             self.numcouplers = len(couplers)
@@ -356,11 +361,13 @@ class OrganClient:
 
     # Change mode (instrument)
     def change_mode(self, m):
+        for i in range(0, len(self.topic)):
+            self.zerostops(self.topic[i])
         self.modeindex = m % len(self.modes)
         self.load_instrument_config(self.modes[self.modeindex])
-        data = "M {}".format(self.modeindex)
+        modedata = "M {}".format(self.modeindex)
         for i in range(0, len(self.topic)):
-            self.mqttpublish(data, self.topic[i])
+            self.mqttpublish(modedata, self.topic[i])
 
     # Change transpose offset
     def transpose(self, t):
@@ -368,7 +375,6 @@ class OrganClient:
         data = "T {} ".format(t)
         for i in range(0, len(self.topic)):
             self.mqttpublish(data, self.topic[i])
-
 
     # Handle a hardcoded special preset action
     # e.g. Changing mode
@@ -385,7 +391,7 @@ class OrganClient:
             if i == 2:
                 # Transpose down
                 self.transpose(self.transposeamount - 1)
-            if i== 3:
+            if i == 3:
                 # Transpose up
                 self.transpose(self.transposeamount + 1)
 
@@ -399,6 +405,10 @@ class OrganClient:
         else:
             print "Linear note switches via IO chips {}".format(self.noteaddr)
         print "Stop switches via IO chip {}".format(self.stopaddr)
+        if self.autopedalstop < 0:
+            print "No auto-pedal"
+        else:
+            print "Auto-pedal on stop {}".format(self.autopedalstop)
         if self.numcouplers > 0:
             for c in range(0, self.numcouplers):
                 print "Coupler {} goes to {}".format(c + 1, self.couplertopics[c])
@@ -415,6 +425,14 @@ class OrganClient:
         print "Supported modes: {}".format(self.modes)
         if self.flakyswitches:
             print "Using switch glitch processing"
+
+    def lowest_note_pressed(self):
+        lowest = -1
+        for n in range(0, len(self.notestate)):
+            if self.notestate[n] == "1":
+                lowest = n
+                break
+        return lowest
 
     def process_state(self):
         # Read note hardware
@@ -438,6 +456,8 @@ class OrganClient:
 
         # Look at presets state
         # TODO: change stored stop state as preset if the preset has been held for a while
+        # This should be a temporary change, as writing a config file requires root privilege if in /etc
+        # or processing an overlay config if for the current user. Also prevents using a read-only filing system.
         if self.numpresets > 0:
             oldpbuttonstate = list(self.pbuttonstate)
             checktime = time.time()
@@ -462,7 +482,7 @@ class OrganClient:
                             # meaning loop indices may be out of range of array bounds
                             # nonlocal presetchange # Python3 specific
                             presetchange = False
-                            # Reset LEDs
+                            # Reset stops
                             for n in range(0, self.numstopio * 8):
                                 self.stopstate[n] = 0L
                             stopchange = True
@@ -490,7 +510,7 @@ class OrganClient:
             self.buttonstate[i] = ((self.presetbin >> i) & 1) == 1
         # Look for stop changes
         for i in range(0, self.numstopio * 8):
-            if (self.buttonstate[i] and not oldbuttonstate[i]):  # or (oldbuttonstate[i] and not buttonstate[i]):
+            if self.buttonstate[i] and not oldbuttonstate[i]:
                 if checktime > self.stoptriggertime[i]:
                     if DEBUG:
                         print "INPUT: Trigger stop {} from state {} to {}".format(
@@ -501,34 +521,51 @@ class OrganClient:
                     stopchange = True
         stopdata = ""
         # Couplers are always the last switches. There may be a gap between the stops and the couplers
-        # coupleroffset = self.numstopio * 8 - self.numcouplers
         if stopchange:
             for n in range(0, self.numstopio):
-                leds = 0
                 for i in range(0, 8):
                     sn = n * 8 + i
-                    if sn < self.numstops or sn >= self.coupleroffset:
+                    if sn < self.numstops or sn >= self.coupleroffset or sn == self.autopedalstop:
                         if self.stoptrigger[sn] and self.buttonstate[sn]:
                             self.stopstate[sn] = 1L - self.stopstate[sn]
                             if DEBUG:
                                 print "INPUT: Changing stop {} to {}".format(sn, self.stopstate[sn])
-                        if self.stopstate[sn] > 0:
-                            leds = leds + (1 << (7 - i))
-                # if DEBUG:
-                #     print "INPUT: Setting LED bank {} to {}".format(n, tobin(leds, 8))
-                # self.sbuses[n].write_port(self.stopwport, leds)
             for i in range(0, self.numstopio * 8):
                 if self.stoptrigger[i]:
                     stopdata = stopdata + "S {} {} ".format(i, self.stopstate[i])
             for i in range(0, self.numcouplers):
                 if self.stoptrigger[i + self.coupleroffset]:
                     notechange = True
+            if self.autopedalstop >= 0:
+                self.autopedalactive = self.stopstate[self.autopedalstop] == 1
 
         if notechange or stopchange:
             if DEBUG:
                 if notechange:
                     print "INPUT: ", changedebug
             self.mqttpublish(notedata + stopdata, self.topic[self.thiskeyboard])
+
+        if notechange:
+            if not self.autopedalactive and self.pedalnote >= 0:
+                # Autopedal has been turned off, but a note has already been triggered through it
+                pedaloff = "N {} {} 0".format(self.thiskeyboard, self.pedalnote + self.noteoffset)
+                self.mqttpublish(pedaloff, self.topic[0])
+                self.pedalnote = -1
+            if self.autopedalactive:
+                pedalswitch = ""
+                lownote = self.lowest_note_pressed()
+                if lownote >= 32:
+                    # Only 32 notes on pedalboard
+                    lownote = -1
+                if lownote != self.pedalnote:
+                    # Stop existing note
+                    if self.pedalnote >= 0:
+                        pedalswitch += "N {} {} 0 ".format(self.thiskeyboard, self.pedalnote + self.noteoffset)
+                    # Start new note
+                    if lownote >= 0:
+                        pedalswitch += "N {} {} 1 ".format(self.thiskeyboard, lownote + self.noteoffset)
+                    self.pedalnote = lownote
+                    self.mqttpublish(pedalswitch, self.topic[0])
 
         if notechange and self.numcouplers > 0:
             for n in range(0, self.numcouplers):
