@@ -165,10 +165,10 @@ class OrganClient:
         global mqttconnected
         if VERBOSE:
             print "INPUT: Connecting to MQTT broker at {}:{}".format(broker, port)
+        mqttconnected = False
         self.mqttclient.on_connect = on_mqtt_connect
         self.mqttclient.on_disconnect = on_mqtt_disconnect
         self.mqttclient.loop_start()
-        mqttconnected = False
         while mqttconnected is not True:
             try:
                 self.mqttclient.connect(broker, port, 5)

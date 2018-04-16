@@ -48,20 +48,18 @@ if __name__ == "__main__":
         global mqttconnected
         global mqttclient
         if VERBOSE:
-            print "Connecting to MQTT broker at {}:{}".format(broker, port)
+            print "#Connecting to MQTT broker at {}:{}".format(broker, port)
+        mqttconnected = False
         mqttclient.on_connect = on_mqtt_connect
         mqttclient.on_disconnect = on_mqtt_disconnect
-        mqttconnected = False
-        mqttclient.connect(broker, port, 5)
         mqttclient.loop_start()
         while mqttconnected is not True:
             try:
                 mqttclient.connect(broker, port, 5)
-                mqttclient.loop_start()
                 while mqttconnected is not True:
                     time.sleep(0.1)
             except:
-                print "Exception while connecting to broker"
+                print "#Exception while connecting to broker"
 
 
     # noinspection PyUnusedLocal

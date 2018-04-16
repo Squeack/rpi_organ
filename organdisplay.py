@@ -143,9 +143,9 @@ if __name__ == "__main__":
         global mqttclient
         if VERBOSE:
             print "DISPLAY: Connecting to MQTT broker at {}:{}".format(broker, port)
+        mqttconnected = False
         mqttclient.on_connect = on_mqtt_connect
         mqttclient.on_disconnect = on_mqtt_disconnect
-        mqttconnected = False
         mqttclient.loop_start()
         while mqttconnected is not True:
             try:
