@@ -14,6 +14,31 @@ def tobin(x, count=8):
 
 
 CYCLESNOOZE = 0.003
+mqttconnected = False
+
+
+# noinspection PyUnusedLocal
+def on_mqtt_connect(client, userdata, flags, rc):
+    if rc == 0:
+        global mqttconnected
+        if VERBOSE:
+            print("INPUT: Connected to MQTT broker")
+        mqttconnected = True
+    else:
+        print("INPUT: MQTT connection failed. Error {} = {}".format(rc, mqtt.error_string(rc)))
+        sys.exit(3)
+
+
+# noinspection PyUnusedLocal
+def on_mqtt_disconnect(client, userdata, rc):
+    global mqttconnected
+    mqttconnected = False
+    if VERBOSE:
+        print("INPUT: Disconnected from MQTT broker. Error {} = {}".format(rc, mqtt.error_string(rc)))
+    # rc == 0 means disconnect() was called successfully
+    if rc != 0:
+        if VERBOSE:
+            print("INPUT: Reconnect should be automatic")
 
 
 class OrganClient:
@@ -83,7 +108,7 @@ class OrganClient:
     def read_config(self, configfile):
         try:
             if self.verbose:
-                print "Using config file: {}".format(configfile)
+                print "INPUT: Using config file: {}".format(configfile)
             self.config.read(configfile)
             self.numkeyboards = self.config.getint("Global", "numkeyboards")
             self.thiskeyboard = self.config.getint("Local", "thiskeyboard")
@@ -91,8 +116,7 @@ class OrganClient:
             self.mqttbroker = self.config.get("Global", "mqttbroker")
             self.mqttport = self.config.getint("Global", "mqttport")
             self.mqttclient = mqtt.Client("Client" + self.localconfig)
-            self.mqttclient.connect(self.mqttbroker, self.mqttport, 30)
-            self.mqttclient.loop_start()
+            self.connect_to_mqtt(self.mqttbroker, self.mqttport)
             self.switchtype = self.config.get(self.localconfig, "switchtype")
             self.flakyswitches = self.config.has_option(self.localconfig, "flakyswitches")
 
@@ -105,7 +129,7 @@ class OrganClient:
             alist = self.config.get(self.localconfig, "ionoteaddr")
             self.noteaddr = map(int, alist.split(","))
             if self.switchtype != "matrix" and self.switchtype != "linear":
-                print "Invalid switch type"
+                print "INPUT: Invalid switch type"
                 sys.exit(3)
             if self.switchtype == "matrix":
                 self.notewport = self.config.getint(self.localconfig, "notewport")
@@ -132,9 +156,26 @@ class OrganClient:
                 self.topic[k] = self.config.get("Console" + str(k), "topic")
             self.change_mode(self.modeindex)
         except ConfigParser.Error as e:
-            print "Error parsing the configuration file"
+            print "INPUT: Error parsing the configuration file"
             print e.message
             sys.exit(1)
+
+    # Connect to the MQTT broker
+    def connect_to_mqtt(self, broker, port):
+        global mqttconnected
+        if VERBOSE:
+            print "INPUT: Connecting to MQTT broker at {}:{}".format(broker, port)
+        mqttconnected = False
+        self.mqttclient.on_connect = on_mqtt_connect
+        self.mqttclient.on_disconnect = on_mqtt_disconnect
+        self.mqttclient.loop_start()
+        while mqttconnected is not True:
+            try:
+                self.mqttclient.connect(broker, port, 5)
+                while mqttconnected is not True:
+                    time.sleep(0.1)
+            except Exception as e:
+                print "INPUT: Exception {} while connecting to broker".format(e.message)
 
     # Publish an event for processing elsewhere (display, sound, recording, etc)
     def mqttpublish(self, message, topic):
@@ -146,7 +187,7 @@ class OrganClient:
     # Turn off all notes, not just limited to the keyboard range
     def zeronotes(self, topic):
         if self.verbose:
-            print "Publishing note offs to {}".format(topic)
+            print "INPUT: Publishing note offs to {}".format(topic)
         for a in range(0, 8):
             data = ""
             for b in range(0, 16):
@@ -157,7 +198,7 @@ class OrganClient:
     # Turn off all stops
     def zerostops(self, topic):
         if self.verbose:
-            print "Publishing stop offs to {}".format(topic)
+            print "INPUT: Publishing stop offs to {}".format(topic)
         data = ""
         for i in range(0, self.numstops):
             data += "S {} 0 ".format(i)
@@ -188,7 +229,7 @@ class OrganClient:
                 oldnotecheck = self.notecheck
             self.notecheck = nstate
             if self.debug:
-                print "Comparing {} with {}".format(oldnotecheck, nstate)
+                print "INPUT: Comparing {} with {}".format(oldnotecheck, nstate)
             newnstate = ""
             for p in range(0, len(nstate)):
                 if nstate[p] == "1" and oldnotecheck[p] == "1":
@@ -307,7 +348,7 @@ class OrganClient:
     # Reset hardware and shut down MQTT publisher
     def hardware_finalise(self):
         if self.verbose:
-            print "Reset hardware interfaces"
+            print "INPUT: Reset hardware interfaces"
         self.mqttclient.loop_stop()
         self.mqttclient.disconnect()
         for n in range(0, len(self.noteaddr)):
@@ -321,11 +362,11 @@ class OrganClient:
     # Load an instrument specific configuration
     def load_instrument_config(self, inst):
         if self.verbose:
-            print "Loading {} configuration".format(inst)
+            print "INPUT: Loading {} configuration".format(inst)
         try:
             self.numstops = self.config.getint(self.localconfig + inst, "numstops")
             if self.numstops + self.numcouplers > 8 * self.numstopio:
-                print "Too many stops ({}) and couplers ({}) for I/O chips ({}) to handle.".format(
+                print "INPUT: Too many stops ({}) and couplers ({}) for I/O chips ({}) to handle.".format(
                     self.numstops, self.numcouplers, self.numstopio)
                 sys.exit(2)
             self.numpresets = 0
@@ -334,7 +375,7 @@ class OrganClient:
             if self.numpresetio > 0:
                 self.numpresets = self.config.getint(self.localconfig + inst, "numpresets")
                 if self.numpresets > 16 * self.numpresetio:
-                    print "Too many presets ({}) for I/O chips ({}) to handle.".format(
+                    print "INPUT: Too many presets ({}) for I/O chips ({}) to handle.".format(
                         self.numpresets, self.numpresetio)
                     sys.exit(3)
                 self.presetaction = []
@@ -355,7 +396,7 @@ class OrganClient:
                 for c in range(0, self.numcouplers):
                     self.couplertopics[c] = self.topic[couplers[c]]
         except ConfigParser.Error as e:
-            print "Error parsing the instrument configuration file"
+            print "INPUT: Error parsing the instrument configuration file"
             print e.message
             sys.exit(1)
 
@@ -379,8 +420,8 @@ class OrganClient:
     # Handle a hardcoded special preset action
     # e.g. Changing mode
     def preset_special_action(self, actions):
-        if self.verbose:
-            print "Special action {}".format(actions)
+        if self.debug:
+            print "INPUT: Special action {}".format(actions)
         for i in actions:
             if i == 0:
                 # Previous mode
@@ -397,34 +438,34 @@ class OrganClient:
 
     # Report on the current configuration
     def print_status(self):
-        print "This is keyboard {} of the range 0-{}".format(self.thiskeyboard, self.numkeyboards - 1)
-        print "MQTT broker is {}".format(self.mqttbroker)
-        print "Publishing on topic {}".format(self.topic[self.thiskeyboard])
+        print "INPUT: This is keyboard {} of the range 0-{}".format(self.thiskeyboard, self.numkeyboards - 1)
+        print "INPUT: MQTT broker is {}".format(self.mqttbroker)
+        print "INPUT: Publishing on topic {}".format(self.topic[self.thiskeyboard])
         if self.switchtype == "matrix":
-            print "Note switch matrix via IO chips {}".format(self.noteaddr)
+            print "INPUT: Note switch matrix via IO chips {}".format(self.noteaddr)
         else:
-            print "Linear note switches via IO chips {}".format(self.noteaddr)
-        print "Stop switches via IO chip {}".format(self.stopaddr)
+            print "INPUT: Linear note switches via IO chips {}".format(self.noteaddr)
+        print "INPUT: Stop switches via IO chip {}".format(self.stopaddr)
         if self.autopedalstop < 0:
-            print "No auto-pedal"
+            print "INPUT: No auto-pedal"
         else:
-            print "Auto-pedal on stop {}".format(self.autopedalstop)
+            print "INPUT: Auto-pedal on stop {}".format(self.autopedalstop)
         if self.numcouplers > 0:
             for c in range(0, self.numcouplers):
-                print "Coupler {} goes to {}".format(c + 1, self.couplertopics[c])
+                print "INPUT: Coupler {} goes to {}".format(c + 1, self.couplertopics[c])
         else:
-            print "No couplers"
+            print "INPUT: No couplers"
         if self.numpresetio > 0:
-            print "Preset switches via IO chips {}".format(self.presetaddr)
-            print "{} presets".format(self.numpresets)
+            print "INPUT: Preset switches via IO chips {}".format(self.presetaddr)
+            print "INPUT: {} presets".format(self.numpresets)
             for n in range(0, self.numpresets):
-                print "Preset {} does '{}' action for stops {} on and stops {} off".format(
+                print "INPUT: Preset {} does '{}' action for stops {} on and stops {} off".format(
                     n, self.presetaction[n], self.presetonlist[n], self.presetofflist[n])
         else:
-            print "No presets"
-        print "Supported modes: {}".format(self.modes)
+            print "INPUT: No presets"
+        print "INPUT: Supported modes: {}".format(self.modes)
         if self.flakyswitches:
-            print "Using switch glitch processing"
+            print "INPUT: Using switch glitch processing"
 
     def lowest_note_pressed(self):
         lowest = -1
@@ -605,7 +646,7 @@ if __name__ == "__main__":
         global DEBUG
         global cont
         if DEBUG:
-            print "Shutdown signal caught"
+            print "INPUT: Shutdown signal caught"
         cont = False
 
 
@@ -621,13 +662,13 @@ if __name__ == "__main__":
             sys.exit(0)
         elif opt in ("-d", "--debug"):
             DEBUG = True
-            print "Debug mode enabled"
+            print "INPUT: Debug mode enabled"
         elif opt in ("-v", "--verbose"):
             VERBOSE = True
-            print "Verbose mode enabled"
+            print "INPUT: Verbose mode enabled"
         elif opt in ("-c", "--config"):
             configfile = arg
-            print "Using config file: {}".format(configfile)
+            print "INPUT: Using config file: {}".format(configfile)
 
     if configfile == "":
         if os.path.isfile("~/.organ.conf"):
@@ -655,7 +696,6 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, signal_handler)
 
     starttime = time.time()
-    p = 0
 
     cont = True
     while cont:
@@ -664,13 +704,13 @@ if __name__ == "__main__":
     endtime = time.time()
 
     if VERBOSE:
-        print "Cleaning up"
+        print "INPUT: Cleaning up"
     # Reset servers
     corgan.resetservers()
     # Reset hardware interfaces
     corgan.hardware_finalise()
 
-    print "Average cycle time = %4.2f" % (
+    print "INPUT: Average cycle time = %4.2f" % (
                 1000 * (endtime - starttime) / cyclecount), "ms, including a pause of %4.2f" % (
                 1000 * CYCLESNOOZE), "ms"
 

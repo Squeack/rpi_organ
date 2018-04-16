@@ -7,6 +7,7 @@ import ConfigParser
 import getopt
 import paho.mqtt.client as mqtt
 
+
 if __name__ == "__main__":
     DEBUG = False
     VERBOSE = False
@@ -21,9 +22,37 @@ if __name__ == "__main__":
                 print("Connected to MQTT broker")
             mqttconnected = True
         else:
-            print("MQTT connection failed")
+            print("MQTT connection failed. Error {} = {}".format(rc, mqtt.error_string(rc)))
             sys.exit(3)
 
+    # noinspection PyUnusedLocal
+    def on_mqtt_disconnect(client, userdata, rc):
+        global mqttconnected
+        global mqttclient
+        mqttconnected = False
+        if VERBOSE:
+            print("Disconnected from MQTT broker. Error {} = {}".format(rc, mqtt.error_string(rc)))
+        # rc == 0 means disconnect() was called successfully
+        if rc != 0:
+            if VERBOSE:
+                print("Reconnect should be automatic")
+
+    def connect_to_mqtt(broker, port):
+        global mqttconnected
+        global mqttclient
+        if VERBOSE:
+            print "Connecting to MQTT broker at {}:{}".format(broker, port)
+        mqttconnected = False
+        mqttclient.on_connect = on_mqtt_connect
+        mqttclient.on_disconnect = on_mqtt_disconnect
+        mqttclient.loop_start()
+        while mqttconnected is not True:
+            try:
+                mqttclient.connect(broker, port, 5)
+                while mqttconnected is not True:
+                    time.sleep(0.1)
+            except:
+                print "Exception while connecting to broker"
 
     # Check command line startup options
     configfile = ""
@@ -77,15 +106,8 @@ if __name__ == "__main__":
         print e.message
         sys.exit(2)
 
-    if VERBOSE:
-        print "Connecting to MQTT broker at {}:{}".format(mqttbroker, mqttport)
     mqttclient = mqtt.Client("Playback")
-    mqttclient.on_connect = on_mqtt_connect
-    mqttconnected = False
-    mqttclient.connect(mqttbroker, mqttport, 30)
-    mqttclient.loop_start()
-    while mqttconnected is not True:
-        time.sleep(0.1)
+    connect_to_mqtt(mqttbroker, mqttport)
 
     with open(filename, 'r') as f:
         playback = f.readlines()
