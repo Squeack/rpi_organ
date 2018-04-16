@@ -203,6 +203,7 @@ if __name__ == "__main__":
             # Mode message
             if cmd == "M":
                 del pieces[0]
+                dorgan.blank_display()
 
     # Check command line startup options
     try:
