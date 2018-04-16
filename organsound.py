@@ -61,6 +61,7 @@ class OrganServer:
             if self.verbose:
                 print "SOUND: Configured stop {} to use patch {} ({})".format(s, self.patches[s], self.stopnames[s])
         self.stops = [0] * self.num_stops
+        self.prevstops = [0] * self.num_stops
 
     def start_note(self, channel, note, velocity=127):
         if (note >= 0) and (note < NUM_KEYS):
@@ -159,9 +160,20 @@ class OrganServer:
 
 
 if __name__ == "__main__":
+    import signal
+
     DEBUG = False
     VERBOSE = False
     configfile = ""
+
+    # noinspection PyUnusedLocal
+    def signal_handler(signal, frame):
+        global DEBUG
+        global cont
+        if DEBUG:
+            print "SOUND: Shutdown signal caught"
+        cont = False
+
 
     # noinspection PyUnusedLocal
     def on_mqtt_connect(client, userdata, flags, rc):
@@ -180,7 +192,7 @@ if __name__ == "__main__":
                 (subsuccess, mid) = mqttclient.subscribe(mqtttopic)
                 time.sleep(1)
             if VERBOSE:
-                print "DISPLAY: Subscribed to {}".format(mqtttopic)
+                print "SOUND: Subscribed to {}".format(mqtttopic)
         else:
             print("SOUND: MQTT connection failed. Error {} = {}".format(rc, mqtt.error_string(rc)))
             sys.exit(3)
@@ -325,16 +337,16 @@ if __name__ == "__main__":
     mqttclient = mqtt.Client("Server" + localsection)
     connect_to_mqtt(mqttbroker, mqttport)
 
+    # Register signal handler
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
     cont = True
     totaltime = 0.0
     numevents = 0
-    while cont:
-        try:
-            # Incoming messages are handled by the mqtt callback
-            time.sleep(1)
-
-        except KeyboardInterrupt:
-            cont = False
+    while cont == True:
+        # Incoming messages are handled by the mqtt callback
+        time.sleep(1)
 
     if VERBOSE:
         print "SOUND: Cleaning up"

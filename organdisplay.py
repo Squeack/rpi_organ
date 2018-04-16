@@ -98,11 +98,27 @@ class OrganDisplay:
         self.stopstate[s] = 1 - self.stopstate[s]
         self.showLEDs()
 
+    def blank_display(self):
+        for s in range(0, self.numstopio * 8):
+            self.stopstate[s] = 0
+        self.showLEDs()
+
 
 if __name__ == "__main__":
+    import signal
+
     DEBUG = False
     VERBOSE = False
     configfile = ""
+
+    # noinspection PyUnusedLocal
+    def signal_handler(signal, frame):
+        global DEBUG
+        global cont
+        if DEBUG:
+            print "DISPLAY: Shutdown signal caught"
+        cont = False
+
 
     # noinspection PyUnusedLocal
     def on_mqtt_connect(client, userdata, flags, rc):
@@ -239,16 +255,16 @@ if __name__ == "__main__":
     mqttclient = mqtt.Client("Display" + localsection)
     connect_to_mqtt(mqttbroker, mqttport)
 
+    # Register signal handler
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
     cont = True
     totaltime = 0.0
     numevents = 0
     while cont:
-        try:
-            # Incoming messages are handled by the mqtt callback
-            time.sleep(1)
-
-        except KeyboardInterrupt:
-            cont = False
+        # Incoming messages are handled by the mqtt callback
+        time.sleep(1)
 
     if VERBOSE:
         print "DISPLAY: Cleaning up"
