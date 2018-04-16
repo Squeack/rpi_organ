@@ -16,6 +16,7 @@ except ImportError:
 import re
 import platform
 
+
 def tobin(x, count=8):
     # type: (int, int) -> str
     return "".join(map(lambda y: str((x >> y) & 1), range(count - 1, -1, -1)))

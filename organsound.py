@@ -20,16 +20,16 @@ class OrganServer:
         self.verbose = verbose_flag
         self.debug = debug_flag
         if self.verbose:
-            print "This is server {} in the range 0-{}".format(this_keyboard, num_keyboards - 1)
-        self.channels = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15]  # Skip channel 9
+            print "SOUND: This is server {} in the range 0-{}".format(this_keyboard, num_keyboards - 1)
+        self.channels = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15]  # Skip channel 9 (usually drums)
+        self.allkeys = [[0] * NUM_KEYS for _ in range(num_keyboards)]  # State of keys on all manuals
         self.keys = [0] * NUM_KEYS
-        self.allkeys = [[0] * NUM_KEYS for _ in range(num_keyboards)]
+        self.prevkeys = [0] * NUM_KEYS
         self.num_stops = 1
-        self.stops = [0] * self.num_stops
-        self.notes = [[0] * NUM_KEYS for _ in range(self.num_stops)]
-        self.oldnotes = [[0] * NUM_KEYS for _ in range(self.num_stops)]
+        self.stops = [0] * self.num_stops  # State of stops on this manual
+        self.prevstops = [0] * self.num_stops
         self.patches = [0]
-        self.stopnames = [""]
+        self.stopnames = [""]  # Only used for cosmetic purposes
         self.modeindex = 0
         self.sfid = 0
         mlist = config.get(localsection, "modes")
@@ -47,22 +47,20 @@ class OrganServer:
         self.sfid = fs.sfload(soundfont)
         self.num_stops = config.getint(localsection + inst, "numstops")
         if self.num_stops > len(self.channels):
-            print "More stops than channels available"
+            print "SOUND: More stops than channels available"
             sys.exit(4)
         self.patches = [0] * self.num_stops
         self.stopnames = [""] * self.num_stops
         if self.verbose:
-            print "Using {} stops from {}".format(self.num_stops, soundfont)
+            print "SOUND: Using {} stops from {}".format(self.num_stops, soundfont)
         for s in range(0, self.num_stops):
             strs = str(s)
             self.patches[s] = config.getint(localsection + inst, "stop%s" % strs)
             self.stopnames[s] = config.get(localsection + inst, "stopname%s" % strs)
             fs.program_select(self.channels[s], self.sfid, 0, self.patches[s])
             if self.verbose:
-                print "Configured stop {} to use patch {} ({})".format(s, self.patches[s], self.stopnames[s])
+                print "SOUND: Configured stop {} to use patch {} ({})".format(s, self.patches[s], self.stopnames[s])
         self.stops = [0] * self.num_stops
-        self.notes = [[0] * NUM_KEYS for _ in range(self.num_stops)]
-        self.oldnotes = [[0] * NUM_KEYS for _ in range(self.num_stops)]
 
     def start_note(self, channel, note, velocity=127):
         if (note >= 0) and (note < NUM_KEYS):
@@ -79,29 +77,36 @@ class OrganServer:
             fs.noteoff(channel, note + self.transposeamount)
 
     def find_changes(self):
-        # Loop through each key
+        # Look for coupled key press changes and collapse to a single list
         for n in range(FIRST_KEY, LAST_KEY):
+            self.prevkeys[n] = self.keys[n]
             self.keys[n] = 0
-            # Look if this key is triggered locally or from a coupled keyboard
-            for k in range(0, num_keyboards):
-                if self.allkeys[k][n] > 0:
+            for manual in self.allkeys:
+                if manual[n] > 0:
                     self.keys[n] = 1
                     break
-            # Look if each stop is active
-            for s in range(0, self.num_stops):
-                if self.stops[s] > 0:
-                    self.notes[s][n] = self.keys[n]
-                else:
-                    self.notes[s][n] = 0
-
-        # Handle any changes from the previous state
+        # If a key has changed then change the notes playing for each active stop
+        for n in range(FIRST_KEY, LAST_KEY):
+            if self.keys[n] > self.prevkeys[n]:
+                for s in range(0, self.num_stops):
+                    if self.stops[s] > 0:
+                        self.start_note(s, n, VOLUME)
+            if self.keys[n] < self.prevkeys[n]:
+                for s in range(0, self.num_stops):
+                    if self.stops[s] > 0:
+                        self.stop_note(s, n)
+        # If a stop has changed then change the notes playing for each active key
+        # This may cause duplicate starts/stops with previous block, but this does not really matter
         for s in range(0, self.num_stops):
-            for n in range(FIRST_KEY, LAST_KEY):
-                if self.notes[s][n] > self.oldnotes[s][n]:
-                    self.start_note(s, n, VOLUME)
-                if self.notes[s][n] < self.oldnotes[s][n]:
-                    self.stop_note(s, n)
-                self.oldnotes[s][n] = self.notes[s][n]
+            if self.stops[s] > self.prevstops[s]:
+                for n in range(FIRST_KEY, LAST_KEY):
+                    if self.keys[n] > 0:
+                        self.start_note(s, n, VOLUME)
+            if self.stops[s] < self.prevstops[s]:
+                for n in range(FIRST_KEY, LAST_KEY):
+                    if self.keys[n] > 0:
+                        self.stop_note(s, n)
+            self.prevstops[s] = self.stops[s]
 
     def toggle_stop(self, stop):
         if self.stops[stop] == 0:
@@ -153,7 +158,6 @@ class OrganServer:
         self.transposeamount = t
 
 
-
 if __name__ == "__main__":
     DEBUG = False
     VERBOSE = False
@@ -163,13 +167,52 @@ if __name__ == "__main__":
     def on_mqtt_connect(client, userdata, flags, rc):
         if rc == 0:
             global mqttconnected
+            global mqtttopic
+            global VERBOSE
             if VERBOSE:
-                print("Connected to MQTT broker")
+                print("SOUND: Connected to MQTT broker")
             mqttconnected = True
+            mqttclient.on_message = on_mqtt_message
+            subsuccess = -1
+            while subsuccess != 0:
+                if VERBOSE:
+                    print "SOUND: Subscribing to {}".format(mqtttopic)
+                (subsuccess, mid) = mqttclient.subscribe(mqtttopic)
+                time.sleep(1)
+            if VERBOSE:
+                print "DISPLAY: Subscribed to {}".format(mqtttopic)
         else:
-            print("MQTT connection failed")
+            print("SOUND: MQTT connection failed. Error {} = {}".format(rc, mqtt.error_string(rc)))
             sys.exit(3)
 
+    # noinspection PyUnusedLocal
+    def on_mqtt_disconnect(client, userdata, rc):
+        global mqttconnected
+        global mqttclient
+        mqttconnected = False
+        if VERBOSE:
+            print("SOUND: Disconnected from MQTT broker. Error {} = {}".format(rc, mqtt.error_string(rc)))
+        # rc == 0 means disconnect() was called successfully
+        if rc != 0:
+            if VERBOSE:
+                print("SOUND: Reconnect should be automatic")
+
+    def connect_to_mqtt(broker, port):
+        global mqttconnected
+        global mqttclient
+        if VERBOSE:
+            print "SOUND: Connecting to MQTT broker at {}:{}".format(broker, port)
+        mqttclient.on_connect = on_mqtt_connect
+        mqttclient.on_disconnect = on_mqtt_disconnect
+        mqttconnected = False
+        mqttclient.loop_start()
+        while mqttconnected is not True:
+            try:
+                mqttclient.connect(broker, port, 5)
+                while mqttconnected is not True:
+                    time.sleep(0.1)
+            except Exception as e:
+                print "SOUND: Exception {} while connecting to broker".format(e.message)
 
     # noinspection PyUnusedLocal
     def on_mqtt_message(client, userdata, message):
@@ -188,10 +231,10 @@ if __name__ == "__main__":
                 k = int(pieces[0])
                 n = int(pieces[1])
                 v = int(pieces[2])
-                if n >= 0 and n < 128:
+                if 0 <= n < 128:
                     if v > 0:
                         sorgan.keyboard_key_down(k, n)
-                    if v == 0:
+                    elif v == 0:
                         sorgan.keyboard_key_up(k, n)
                 del pieces[0]
                 del pieces[0]
@@ -202,9 +245,9 @@ if __name__ == "__main__":
                 a = int(pieces[1])
                 if a == 0:
                     sorgan.stop_off(n)
-                if a == 1:
+                elif a == 1:
                     sorgan.stop_on(n)
-                if a == 2:
+                elif a == 2:
                     sorgan.toggle_stop(n)
                 del pieces[0]
                 del pieces[0]
@@ -215,6 +258,7 @@ if __name__ == "__main__":
                 sorgan.find_changes()
                 sorgan.set_instrument(n)
                 del pieces[0]
+            # Transpose message
             if cmd == "T":
                 t = int(pieces[0])
                 sorgan.transpose(t)
@@ -236,13 +280,13 @@ if __name__ == "__main__":
             sys.exit(0)
         elif opt in ("-d", "--debug"):
             DEBUG = True
-            print "Debug mode enabled"
+            print "SOUND: Debug mode enabled"
         elif opt in ("-v", "--verbose"):
             VERBOSE = True
-            print "Verbose mode enabled"
+            print "SOUND: Verbose mode enabled"
         elif opt in ("-c", "--config"):
             configfile = arg
-            print "Config file: {}".format(configfile)
+            print "SOUND: Config file: {}".format(configfile)
 
     # Initialise synth connections
     fs = pyfs.Synth(0.2, 44100, 256, 16, 2, 64, 'no', 'no')
@@ -262,7 +306,7 @@ if __name__ == "__main__":
     # Read config file
     try:
         if VERBOSE:
-            print "Using config file: {}".format(configfile)
+            print "SOUND: Using config file: {}".format(configfile)
         config = ConfigParser.SafeConfigParser()
         config.read(configfile)
         num_keyboards = config.getint("Global", "numkeyboards")
@@ -270,29 +314,16 @@ if __name__ == "__main__":
         localsection = "Console" + str(this_keyboard)
         mqttbroker = config.get("Global", "mqttbroker")
         mqttport = config.getint("Global", "mqttport")
-        topic = config.get(localsection, "topic")
+        mqtttopic = config.get(localsection, "topic")
     except ConfigParser.Error as e:
-        print "Error parsing the configuration file"
+        print "SOUND: Error parsing the configuration file"
         print e.message
         sys.exit(2)
 
     sorgan = OrganServer(VERBOSE, DEBUG)
 
-    if VERBOSE:
-        print "Subscribing to MQTT broker at {}:{}".format(mqttbroker, mqttport)
     mqttclient = mqtt.Client("Server" + localsection)
-    mqttclient.on_connect = on_mqtt_connect
-    mqttclient.on_message = on_mqtt_message
-    mqttconnected = False
-    mqttclient.connect(mqttbroker, mqttport, 30)
-    mqttclient.loop_start()
-    while mqttconnected is not True:
-        time.sleep(0.1)
-
-    mqttclient.subscribe(topic)
-
-    if VERBOSE:
-        print "Listening for published data"
+    connect_to_mqtt(mqttbroker, mqttport)
 
     cont = True
     totaltime = 0.0
@@ -306,11 +337,11 @@ if __name__ == "__main__":
             cont = False
 
     if VERBOSE:
-        print "Cleaning up"
+        print "SOUND: Cleaning up"
         mqttclient.disconnect()
         mqttclient.loop_stop()
         if numevents > 0:
-            print "Average event process time = %4.2f" % (1000 * totaltime / numevents), "ms"
+            print "SOUND: Average event process time = %4.2f" % (1000 * totaltime / numevents), "ms"
         else:
-            print "No events received"
+            print "SOUND: No events received"
     fs.delete()

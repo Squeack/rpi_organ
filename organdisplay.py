@@ -8,6 +8,7 @@ import getopt
 import ConfigParser
 import paho.mqtt.client as mqtt
 
+
 def tobin(x, count=8):
     # type: (int, int) -> str
     return "".join(map(lambda y: str((x >> y) & 1), range(count - 1, -1, -1)))
@@ -38,14 +39,14 @@ class OrganDisplay:
         self.stoprport = self.config.getint(self.localsection, "stoprport")
         self.stopstate = [0L] * (self.numstopio * 8)
 
-    def hardware_initialise_stops(self, bus, Wport, Rport):
-        bus.set_port_direction(Wport, 0x00)
-        bus.set_port_pullups(Wport, 0x00)
-        bus.invert_port(Wport, 0x00)
-        bus.write_port(Wport, 0x00)
-        bus.set_port_direction(Rport, 0xFF)
-        bus.set_port_pullups(Rport, 0xFF)
-        bus.invert_port(Rport, 0xFF)
+    def hardware_initialise_stops(self, bus, wport, rport):
+        bus.set_port_direction(wport, 0x00)
+        bus.set_port_pullups(wport, 0x00)
+        bus.invert_port(wport, 0x00)
+        bus.write_port(wport, 0x00)
+        bus.set_port_direction(rport, 0xFF)
+        bus.set_port_pullups(rport, 0xFF)
+        bus.invert_port(rport, 0xFF)
         if self.debug:
             bus.print_bus_status()
 
@@ -70,7 +71,7 @@ class OrganDisplay:
 
     def hardware_finalise(self):
         if self.verbose:
-            print "Reset hardware interfaces"
+            print "DISPLAY: Reset hardware interfaces"
         for n in range(0, self.numstopio):
             self.hardware_finalise_bus(self.sbuses[n])
 
@@ -82,20 +83,21 @@ class OrganDisplay:
                 if self.stopstate[sn] > 0:
                     leds = leds + (1 << (7 - i))
             if self.debug:
-                print "Setting LED bank {} to {}".format(n, tobin(leds, 8))
+                print "DISPLAY: Setting LED bank {} to {}".format(n, tobin(leds, 8))
             self.sbuses[n].write_port(self.stopwport, leds)
 
-    def stop_on(self,s):
+    def stop_on(self, s):
         self.stopstate[s] = 1
         self.showLEDs()
 
-    def stop_off(self,s):
+    def stop_off(self, s):
         self.stopstate[s] = 0
         self.showLEDs()
 
-    def toggle_step(self,s):
+    def toggle_step(self, s):
         self.stopstate[s] = 1 - self.stopstate[s]
         self.showLEDs()
+
 
 if __name__ == "__main__":
     DEBUG = False
@@ -106,13 +108,52 @@ if __name__ == "__main__":
     def on_mqtt_connect(client, userdata, flags, rc):
         if rc == 0:
             global mqttconnected
+            global mqtttopic
+            global VERBOSE
             if VERBOSE:
-                print("Connected to MQTT broker")
+                print("DISPLAY: Connected to MQTT broker")
             mqttconnected = True
+            mqttclient.on_message = on_mqtt_message
+            subsuccess = -1
+            while subsuccess != 0:
+                if VERBOSE:
+                    print "DISPLAY: Subscribing to {}".format(mqtttopic)
+                (subsuccess, mid) = mqttclient.subscribe(mqtttopic)
+                time.sleep(1)
+            if VERBOSE:
+                    print "DISPLAY: Subscribed to {}".format(mqtttopic)
         else:
-            print("MQTT connection failed")
+            print("DISPLAY: MQTT connection failed. Error {} = {}".format(rc, mqtt.error_string(rc)))
             sys.exit(3)
 
+    # noinspection PyUnusedLocal
+    def on_mqtt_disconnect(client, userdata, rc):
+        global mqttconnected
+        global mqttclient
+        mqttconnected = False
+        if VERBOSE:
+            print("DISPLAY:{} disconnected from MQTT broker. Error {} = {}".format(client, rc, mqtt.error_string(rc)))
+        # rc == 0 means disconnect() was called successfully
+        if rc != 0:
+            if VERBOSE:
+                print("DISPLAY:Reconnect should be automatic")
+
+    def connect_to_mqtt(broker, port):
+        global mqttconnected
+        global mqttclient
+        if VERBOSE:
+            print "DISPLAY: Connecting to MQTT broker at {}:{}".format(broker, port)
+        mqttclient.on_connect = on_mqtt_connect
+        mqttclient.on_disconnect = on_mqtt_disconnect
+        mqttconnected = False
+        mqttclient.loop_start()
+        while mqttconnected is not True:
+            try:
+                mqttclient.connect(broker, port, 5)
+                while mqttconnected is not True:
+                    time.sleep(0.1)
+            except Exception as e:
+                print "DISPLAY: Exception {} while connecting to broker".format(e.message)
 
     # noinspection PyUnusedLocal
     def on_mqtt_message(client, userdata, message):
@@ -121,7 +162,7 @@ if __name__ == "__main__":
         data = message.payload
         starttime = time.time()
         if DEBUG:
-            print "%6.3f: " % starttime, message.payload
+            print "DISPLAY:  %6.3f: " % starttime, message.payload
         pieces = data.split()
         while len(pieces) > 0:
             cmd = pieces[0]
@@ -158,13 +199,13 @@ if __name__ == "__main__":
             sys.exit(0)
         elif opt in ("-d", "--debug"):
             DEBUG = True
-            print "Debug mode enabled"
+            print "DISPLAY: Debug mode enabled"
         elif opt in ("-v", "--verbose"):
             VERBOSE = True
-            print "Verbose mode enabled"
+            print "DISPLAY: Verbose mode enabled"
         elif opt in ("-c", "--config"):
             configfile = arg
-            print "Config file: {}".format(configfile)
+            print "DISPLAY: Config file: {}".format(configfile)
 
     if configfile == "":
         if os.path.isfile("~/.organ.conf"):
@@ -179,7 +220,7 @@ if __name__ == "__main__":
     # Read config file
     try:
         if VERBOSE:
-            print "Using config file: {}".format(configfile)
+            print "DISPLAY: Using config file: {}".format(configfile)
         config = ConfigParser.SafeConfigParser()
         config.read(configfile)
         num_keyboards = config.getint("Global", "numkeyboards")
@@ -187,29 +228,16 @@ if __name__ == "__main__":
         localsection = "Console" + str(this_keyboard)
         mqttbroker = config.get("Global", "mqttbroker")
         mqttport = config.getint("Global", "mqttport")
-        topic = config.get(localsection, "topic")
+        mqtttopic = config.get(localsection, "topic")
     except ConfigParser.Error as e:
-        print "Error parsing the configuration file"
+        print "DISPLAY: Error parsing the configuration file"
         print e.message
         sys.exit(2)
 
     dorgan = OrganDisplay(configfile, VERBOSE, DEBUG)
 
-    if VERBOSE:
-        print "Subscribing to {} on MQTT broker at {}:{}".format(topic, mqttbroker, mqttport)
     mqttclient = mqtt.Client("Display" + localsection)
-    mqttclient.on_connect = on_mqtt_connect
-    mqttclient.on_message = on_mqtt_message
-    mqttconnected = False
-    mqttclient.connect(mqttbroker, mqttport, 30)
-    mqttclient.loop_start()
-    while mqttconnected is not True:
-        time.sleep(0.1)
-
-    mqttclient.subscribe(topic)
-
-    if VERBOSE:
-        print "Listening for published data"
+    connect_to_mqtt(mqttbroker, mqttport)
 
     cont = True
     totaltime = 0.0
@@ -223,7 +251,7 @@ if __name__ == "__main__":
             cont = False
 
     if VERBOSE:
-        print "Cleaning up"
+        print "DISPLAY: Cleaning up"
         dorgan.hardware_finalise()
         mqttclient.disconnect()
         mqttclient.loop_stop()

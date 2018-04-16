@@ -16,13 +16,52 @@ if __name__ == "__main__":
     def on_mqtt_connect(client, userdata, flags, rc):
         if rc == 0:
             global mqttconnected
+            global mqtttopics
+            global mqttclient
             global VERBOSE
             if VERBOSE:
                 print("#Connected to MQTT broker")
             mqttconnected = True
+            mqttclient.on_message = on_mqtt_message
+            for t in mqtttopics:
+                mqttclient.subscribe(t)
+                if VERBOSE:
+                    print "#Subscribing to {}".format(t)
         else:
-            print("#MQTT connection failed")
+            print("#MQTT connection failed. Error {} = {}".format(rc, mqtt.error_string(rc)))
             sys.exit(3)
+
+    # noinspection PyUnusedLocal
+    def on_mqtt_disconnect(client, userdata, rc):
+        global mqttconnected
+        global mqttclient
+        mqttconnected = False
+        if VERBOSE:
+            print("#Disconnected from MQTT broker. Error {} = {}".format(rc, mqtt.error_string(rc)))
+        # rc == 0 means disconnect() was called successfully
+        if rc != 0:
+            if VERBOSE:
+                print("#Reconnect should be automatic")
+
+
+    def connect_to_mqtt(broker, port):
+        global mqttconnected
+        global mqttclient
+        if VERBOSE:
+            print "Connecting to MQTT broker at {}:{}".format(broker, port)
+        mqttclient.on_connect = on_mqtt_connect
+        mqttclient.on_disconnect = on_mqtt_disconnect
+        mqttconnected = False
+        mqttclient.connect(broker, port, 5)
+        mqttclient.loop_start()
+        while mqttconnected is not True:
+            try:
+                mqttclient.connect(broker, port, 5)
+                mqttclient.loop_start()
+                while mqttconnected is not True:
+                    time.sleep(0.1)
+            except:
+                print "Exception while connecting to broker"
 
 
     # noinspection PyUnusedLocal
@@ -76,7 +115,7 @@ if __name__ == "__main__":
         if os.path.isfile(sys.path[0] + "/organ.conf"):
             configfile = sys.path[0] + "/organ.conf"
 
-    topics = []
+    mqtttopics = []
     # Read config file
     try:
         if VERBOSE:
@@ -89,9 +128,9 @@ if __name__ == "__main__":
         mqttport = config.getint("Global", "mqttport")
         for k in range(0, num_keyboards):
             localsection = "Console" + str(k)
-            topics.append(config.get(localsection, "topic"))
+            mqtttopics.append(config.get(localsection, "topic"))
         if VERBOSE:
-            print "#Found keyboards {}".format(topics)
+            print "#Found keyboards {}".format(mqtttopics)
 
     except ConfigParser.Error as e:
         print "#Error parsing the configuration file"
@@ -101,25 +140,14 @@ if __name__ == "__main__":
     if filename != "":
         frecord = open(filename, "w")
 
-    if VERBOSE:
-        print "#Connecting to MQTT broker at {}:{}".format(mqttbroker, mqttport)
     mqttclient = mqtt.Client("Recorder")
-    mqttclient.on_connect = on_mqtt_connect
-    mqttclient.on_message = on_mqtt_message
-    mqttconnected = False
-    mqttclient.connect(mqttbroker, mqttport, 30)
-    mqttclient.loop_start()
-    while mqttconnected is not True:
-        time.sleep(0.1)
-    for t in topics:
-        mqttclient.subscribe(t)
-        if VERBOSE:
-            print "#Subscribing to {}".format(t)
+    connect_to_mqtt(mqttbroker, mqttport)
 
     cont = True
     while cont:
         try:
             # Incoming messages are handled by the mqtt callback
+            # No need to do anything here
             time.sleep(1)
 
         except KeyboardInterrupt:
@@ -129,4 +157,5 @@ if __name__ == "__main__":
         print "#Cleaning up"
         mqttclient.disconnect()
         mqttclient.loop_stop()
-        frecord.close()
+        if frecord is not None:
+            frecord.close()
