@@ -34,8 +34,13 @@ class OrganServer:
         self.sfid = 0
         mlist = config.get(localsection, "modes")
         self.modes = mlist.split(",")
-        self.set_instrument(self.modeindex)
+        self.fs = None
         self.transposeamount = 0
+        self.set_instrument(self.modeindex)
+
+    def cleanup(self):
+        if self.fs is not None:
+            self.fs.delete()
 
     def set_instrument(self, n):
         self.all_off()
@@ -43,8 +48,25 @@ class OrganServer:
         self.load_instrument(self.modes[self.modeindex])
 
     def load_instrument(self, inst):
+        # Initialise synth connections
+        if self.verbose:
+            print "SOUND: Loading instrument: {}".format(inst)
+        """ Recreate the whole synth just to change the gain
+        Using one of the more complete python bindings for FluidSynth such as 
+        https://github.com/nwhitehead/pyfluidsynth/blob/master/fluidsynth.py
+        would allow a simple gain change through fs.setting('synth.gain', fsgain)
+        instead of rebuilding the whole synth.
+        """
+        fsgain = config.getfloat(localsection + inst, "fsgain")
+        if self.fs is not None:
+            self.fs.delete()
+            self.fs = None
+        if self.debug:
+            print "SOUND: Restarting FluidSynth with gain={}".format(fsgain)
+        self.fs = pyfs.Synth(fsgain, 44100, 256, 16, 2, 64, 'no', 'no')
+        self.fs.start(driver="alsa")
         soundfont = config.get(localsection + inst, "soundfont")
-        self.sfid = fs.sfload(soundfont)
+        self.sfid = self.fs.sfload(soundfont)
         self.num_stops = config.getint(localsection + inst, "numstops")
         if self.num_stops > len(self.channels):
             print "SOUND: More stops than channels available"
@@ -57,7 +79,7 @@ class OrganServer:
             strs = str(s)
             self.patches[s] = config.getint(localsection + inst, "stop%s" % strs)
             self.stopnames[s] = config.get(localsection + inst, "stopname%s" % strs)
-            fs.program_select(self.channels[s], self.sfid, 0, self.patches[s])
+            self.fs.program_select(self.channels[s], self.sfid, 0, self.patches[s])
             if self.verbose:
                 print "SOUND: Configured stop {} to use patch {} ({})".format(s, self.patches[s], self.stopnames[s])
         self.stops = [0] * self.num_stops
@@ -68,14 +90,14 @@ class OrganServer:
             channel = self.channels[channel]
             if self.debug:
                 print "SOUND: Start playing channel ", channel, ", note ", note
-            fs.noteon(channel, note + self.transposeamount, velocity)
+            self.fs.noteon(channel, note + self.transposeamount, velocity)
 
     def stop_note(self, channel, note):
         if (note >= 0) and (note < NUM_KEYS):
             channel = self.channels[channel]
             if self.debug:
                 print "SOUND: Stop playing channel ", channel, ", note ", note
-            fs.noteoff(channel, note + self.transposeamount)
+            self.fs.noteoff(channel, note + self.transposeamount)
 
     def find_changes(self):
         # Look for coupled key press changes and collapse to a single list
@@ -300,11 +322,6 @@ if __name__ == "__main__":
             configfile = arg
             print "SOUND: Config file: {}".format(configfile)
 
-    # Initialise synth connections
-    fs = pyfs.Synth(0.2, 44100, 256, 16, 2, 64, 'no', 'no')
-    fs.start(driver="alsa")
-    # fs.start(driver = "jack")
-
     if configfile == "":
         if os.path.isfile("~/.organ.conf"):
             configfile = "~/.organ.conf"
@@ -356,4 +373,4 @@ if __name__ == "__main__":
             print "SOUND: Average event process time = %4.2f" % (1000 * totaltime / numevents), "ms"
         else:
             print "SOUND: No events received"
-    fs.delete()
+    sorgan.cleanup()
