@@ -88,11 +88,9 @@ class OrganDisplay:
 
     def stop_on(self, s):
         self.stopstate[s] = 1
-        self.showLEDs()
 
     def stop_off(self, s):
         self.stopstate[s] = 0
-        self.showLEDs()
 
     def toggle_step(self, s):
         self.stopstate[s] = 1 - self.stopstate[s]
@@ -101,7 +99,6 @@ class OrganDisplay:
     def blank_display(self):
         for s in range(0, self.numstopio * 8):
             self.stopstate[s] = 0
-        self.showLEDs()
 
 
 if __name__ == "__main__":
@@ -180,6 +177,7 @@ if __name__ == "__main__":
         if DEBUG:
             print "DISPLAY:  %6.3f: " % starttime, message.payload
         pieces = data.split()
+        stopchange = False
         while len(pieces) > 0:
             cmd = pieces[0]
             del pieces[0]
@@ -200,10 +198,14 @@ if __name__ == "__main__":
                     dorgan.toggle_step(n)
                 del pieces[0]
                 del pieces[0]
+                stopchange = True
             # Mode message
             if cmd == "M":
                 del pieces[0]
                 dorgan.blank_display()
+                stopchange = True
+        if stopchange:
+            dorgan.showLEDs()
 
     # Check command line startup options
     try:

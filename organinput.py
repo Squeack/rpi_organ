@@ -70,6 +70,9 @@ class OrganClient:
         self.presetofflist = []
         self.presetaction = []
         self.stoptrigger = []  # Has a stop button been pressed this cycle
+        self.stopsyncinterval = -1
+        self.stopsynctime = time.time()
+        self.lasteventtime = time.time()
         self.numcouplers = 0
         self.autopedalstop = -1
         self.autopedalactive = False
@@ -119,6 +122,7 @@ class OrganClient:
             self.connect_to_mqtt(self.mqttbroker, self.mqttport)
             self.switchtype = self.config.get(self.localconfig, "switchtype")
             self.flakyswitches = self.config.has_option(self.localconfig, "flakyswitches")
+            self.stopsyncinterval = self.config.getint("Global", "stopsyncinterval")
 
             # What modes (instruments) are emulated ?
             alist = self.config.get(self.localconfig, "modes")
@@ -181,8 +185,10 @@ class OrganClient:
     def mqttpublish(self, message, topic):
         if message != "":
             self.mqttclient.publish(topic, message)
+            nowtime = time.time()
+            self.lasteventtime = nowtime
             if self.debug:
-                print "INPUT: %6.3f" % time.time(), ": '{}' published to {}".format(message, topic)
+                print "INPUT: {:6.3f}: '{}' published to {}".format(nowtime, message, topic)
 
     # Turn off all notes, not just limited to the keyboard range
     def zeronotes(self, topic):
@@ -202,6 +208,15 @@ class OrganClient:
         data = ""
         for i in range(0, self.numstops):
             data += "S {} 0 ".format(i)
+        self.mqttpublish(data, topic)
+
+    # Send state of all stops
+    def sendstopstate(self, topic):
+        if self.debug:
+            print "INPUT: Publishing stop state to {}".format(topic)
+        data = ""
+        for i in range(0, self.numstops):
+            data += "S {} {} ".format(i, self.stopstate[i])
         self.mqttpublish(data, topic)
 
     # Reset this keyboard and stop anything it might be triggering through couplers
@@ -477,6 +492,7 @@ class OrganClient:
 
     def process_state(self):
         # Read note hardware
+        nowtime = time.time()
         oldnotestate = self.notestate
         time.sleep(CYCLESNOOZE)  # Helps synchronise chords and lowers cpu usage
         self.notestate = self.keyboardstate(self.nbuses)
@@ -501,7 +517,7 @@ class OrganClient:
         # or processing an overlay config if for the current user. Also prevents using a read-only filing system.
         if self.numpresets > 0:
             oldpbuttonstate = list(self.pbuttonstate)
-            checktime = time.time()
+            checktime = nowtime
             self.pbuttonstate = self.getpresetstate(self.pbuses)
             # Look for preset changes
             presetchange = False
@@ -542,7 +558,7 @@ class OrganClient:
 
         # Look at stops state
         oldbuttonstate = list(self.buttonstate)
-        checktime = time.time()
+        checktime = nowtime
         oldp = self.presetbin
         self.presetbin = 0
         for n in range(0, len(self.sbuses)):
@@ -630,6 +646,10 @@ class OrganClient:
                     if extranotes != "":
                         self.mqttpublish(extranotes, self.couplertopics[n])
 
+        if nowtime > self.stopsynctime + self.stopsyncinterval:
+            self.sendstopstate(self.topic[self.thiskeyboard])
+            self.stopsynctime = nowtime
+
 
 if __name__ == "__main__":
 
@@ -701,6 +721,7 @@ if __name__ == "__main__":
     while cont:
         cyclecount += 1
         corgan.process_state()
+
     endtime = time.time()
 
     if VERBOSE:
