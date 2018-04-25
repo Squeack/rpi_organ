@@ -492,7 +492,7 @@ class OrganClient:
 
     def process_state(self):
         # Read note hardware
-        nowtime = time.time()
+        timenow = time.time()
         oldnotestate = self.notestate
         time.sleep(CYCLESNOOZE)  # Helps synchronise chords and lowers cpu usage
         self.notestate = self.keyboardstate(self.nbuses)
@@ -512,24 +512,42 @@ class OrganClient:
         self.stoptrigger = [False] * (self.numstopio * 8)
 
         # Look at presets state
-        # TODO: change stored stop state as preset if the preset has been held for a while
-        # This should be a temporary change, as writing a config file requires root privilege if in /etc
-        # or processing an overlay config if for the current user. Also prevents using a read-only filing system.
         if self.numpresets > 0:
             oldpbuttonstate = list(self.pbuttonstate)
-            checktime = nowtime
             self.pbuttonstate = self.getpresetstate(self.pbuses)
             # Look for preset changes
             presetchange = False
             presettrigger = [False] * self.numpresets
             for i in range(0, self.numpresets):
                 if self.pbuttonstate[i] and not oldpbuttonstate[i]:
-                    if checktime > self.presettriggertime[i]:
+                    if timenow > self.presettriggertime[i] + 0.1:
+                        # Preset has been pressed
                         if DEBUG:
                             print "INPUT: Preset {} pressed".format(i)
-                        self.presettriggertime[i] = checktime + 0.1
+                        self.presettriggertime[i] = timenow
+                if oldpbuttonstate[i] and not self.pbuttonstate[i]:
+                    if self.presettriggertime[i] + 0.1 < timenow < self.presettriggertime[i] + 2:
+                        if DEBUG:
+                            print "INPUT: Preset {} quick release".format(i)
                         presettrigger[i] = True
                         presetchange = True
+                    if timenow >= self.presettriggertime[i] + 2:
+                        if DEBUG:
+                            print "INPUT: Preset {} slow release".format(i)
+                        if self.presetaction[i] == "change":
+                            # Reset the stored preset state to the current stop settings
+                            self.presetonlist[i] = []
+                            self.presetofflist[i] = []
+                            for n in range(0, self.numstops):
+                                if self.stopstate[n] == 1:
+                                    self.presetonlist[i].append(n)
+                                else:
+                                    self.presetofflist[i].append(n)
+                        else:
+                            # Same action as a quick press
+                            presettrigger[i] = True
+                            presetchange = True
+
             if presetchange:
                 for i in range(0, self.numpresets):
                     if presettrigger[i]:
@@ -558,7 +576,6 @@ class OrganClient:
 
         # Look at stops state
         oldbuttonstate = list(self.buttonstate)
-        checktime = nowtime
         oldp = self.presetbin
         self.presetbin = 0
         for n in range(0, len(self.sbuses)):
@@ -568,12 +585,12 @@ class OrganClient:
         # Look for stop changes
         for i in range(0, self.numstopio * 8):
             if self.buttonstate[i] and not oldbuttonstate[i]:
-                if checktime > self.stoptriggertime[i]:
+                if timenow > self.stoptriggertime[i]:
                     if DEBUG:
                         print "INPUT: Trigger stop {} from state {} to {}".format(
                             i, tobin(oldp, 16), tobin(self.presetbin, 16))
                     # Allow 0.1s before button is allowed to act again to avoid bouncing
-                    self.stoptriggertime[i] = checktime + 0.1
+                    self.stoptriggertime[i] = timenow + 0.1
                     self.stoptrigger[i] = True
                     stopchange = True
         stopdata = ""
@@ -646,9 +663,9 @@ class OrganClient:
                     if extranotes != "":
                         self.mqttpublish(extranotes, self.couplertopics[n])
 
-        if nowtime > self.stopsynctime + self.stopsyncinterval:
+        if timenow > self.stopsynctime + self.stopsyncinterval:
             self.sendstopstate(self.topic[self.thiskeyboard])
-            self.stopsynctime = nowtime
+            self.stopsynctime = timenow
 
 
 if __name__ == "__main__":
@@ -662,11 +679,11 @@ if __name__ == "__main__":
     configfile = ""
 
     # noinspection PyUnusedLocal
-    def signal_handler(signal, frame):
+    def signal_handler(sig, frame):
         global DEBUG
         global cont
         if DEBUG:
-            print "INPUT: Shutdown signal caught"
+            print "INPUT: Shutdown signal {} caught".format(sig)
         cont = False
 
 
