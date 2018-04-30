@@ -9,7 +9,6 @@ import ConfigParser
 import getopt
 import paho.mqtt.client as mqtt
 
-VOLUME = 127
 NUM_KEYS = 128
 FIRST_KEY = 35
 LAST_KEY = 97
@@ -23,7 +22,7 @@ class OrganServer:
             print "SOUND: This is server {} in the range 0-{}".format(this_keyboard, num_keyboards - 1)
         self.channels = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15]  # Skip channel 9 (usually drums)
         self.allkeys = [[0] * NUM_KEYS for _ in range(num_keyboards)]  # State of keys on all manuals
-        self.keys = [0] * NUM_KEYS
+        self.keys = [0] * NUM_KEYS  # Aggregate state of keys
         self.prevkeys = [0] * NUM_KEYS
         self.num_stops = 1
         self.stops = [0] * self.num_stops  # State of stops on this manual
@@ -37,6 +36,7 @@ class OrganServer:
         self.fs = None
         self.transposeamount = 0
         self.set_instrument(self.modeindex)
+        self.volume = 127
 
     def cleanup(self):
         if self.fs is not None:
@@ -113,7 +113,7 @@ class OrganServer:
             if self.keys[n] > self.prevkeys[n]:
                 for s in range(0, self.num_stops):
                     if self.stops[s] > 0:
-                        self.start_note(s, n, VOLUME)
+                        self.start_note(s, n, self.volume)
             if self.keys[n] < self.prevkeys[n]:
                 for s in range(0, self.num_stops):
                     if self.stops[s] > 0:
@@ -124,7 +124,7 @@ class OrganServer:
             if self.stops[s] > self.prevstops[s]:
                 for n in range(FIRST_KEY, LAST_KEY):
                     if self.keys[n] > 0:
-                        self.start_note(s, n, VOLUME)
+                        self.start_note(s, n, self.volume)
             if self.stops[s] < self.prevstops[s]:
                 for n in range(FIRST_KEY, LAST_KEY):
                     if self.keys[n] > 0:
@@ -179,6 +179,11 @@ class OrganServer:
         # Copy key state back ready to restart notes
         self.allkeys = copy.deepcopy(oldkeys)
         self.transposeamount = t
+
+    def set_volume(self, v):
+        self.volume = v
+        if self.debug:
+            print "SOUND: Volume now {}".format(self.volume)
 
 
 if __name__ == "__main__":
@@ -297,6 +302,12 @@ if __name__ == "__main__":
                 t = int(pieces[0])
                 sorgan.transpose(t)
                 del pieces[0]
+            # Volume control
+            if cmd == "V":
+                v = int(pieces[0])
+                sorgan.set_volume(v)
+                del pieces[0]
+                
         # Handle the state changes
         sorgan.find_changes()
         endtime = time.time()
