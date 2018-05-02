@@ -1,5 +1,12 @@
 #!/usr/bin/python
 
+"""
+Copyright (c) 2018 Ian Shatwell
+
+The above copyright notice and the LICENSE file shall be included with
+all distributions of this software
+"""
+
 from IOPi import IOPi
 import time
 import sys
@@ -748,8 +755,7 @@ if __name__ == "__main__":
     # Reset hardware interfaces
     corgan.hardware_finalise()
 
-    print "INPUT: Average cycle time = %4.2f" % (
-                1000 * (endtime - starttime) / cyclecount), "ms, including a pause of %4.2f" % (
-                1000 * CYCLESNOOZE), "ms"
+    print "INPUT: Average cycle time = {:4.2f}ms, including a pause of {:4.2f}".format(
+        1000 * (endtime - starttime) / cyclecount, 1000 * CYCLESNOOZE)
 
     sys.exit(0)
