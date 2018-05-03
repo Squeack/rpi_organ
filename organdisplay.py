@@ -152,7 +152,7 @@ if __name__ == "__main__":
         global mqttclient
         mqttconnected = False
         if VERBOSE:
-            print("DISPLAY:{} disconnected from MQTT broker. Error {} = {}".format(client, rc, mqtt.error_string(rc)))
+            print("DISPLAY: Disconnected from MQTT broker. Error {} = {}".format(rc, mqtt.error_string(rc)))
         # rc == 0 means disconnect() was called successfully
         if rc != 0:
             if VERBOSE:
