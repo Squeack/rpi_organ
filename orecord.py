@@ -1,5 +1,12 @@
 #!/usr/bin/python
 
+"""
+Copyright (c) 2018 Ian Shatwell
+
+The above copyright notice and the LICENSE file shall be included with
+all distributions of this software
+"""
+
 import sys
 import os.path
 import time

@@ -1,5 +1,12 @@
 #!/usr/bin/python
 
+"""
+Copyright (c) 2018 Ian Shatwell
+
+The above copyright notice and the LICENSE file shall be included with
+all distributions of this software
+"""
+
 import pyfs
 import sys
 import os.path
@@ -89,14 +96,14 @@ class OrganServer:
         if (note >= 0) and (note < NUM_KEYS):
             channel = self.channels[channel]
             if self.debug:
-                print "SOUND: Start playing channel ", channel, ", note ", note
+                print "SOUND: Start playing channel {}, note {}".format(channel, note)
             self.fs.noteon(channel, note + self.transposeamount, velocity)
 
     def stop_note(self, channel, note):
         if (note >= 0) and (note < NUM_KEYS):
             channel = self.channels[channel]
             if self.debug:
-                print "SOUND: Stop playing channel ", channel, ", note ", note
+                print "SOUND: Stop playing channel {}, note {}".format(channel, note)
             self.fs.noteoff(channel, note + self.transposeamount)
 
     def find_changes(self):
@@ -151,12 +158,12 @@ class OrganServer:
 
     def keyboard_key_down(self, keyboard, note):
         if self.debug:
-            print "SOUND: Note " + str(note) + " down on keyboard " + str(keyboard)
+            print "SOUND: Note {} down on keyboard {}".format(note, keyboard)
         self.allkeys[keyboard][note] = 1
 
     def keyboard_key_up(self, keyboard, note):
         if self.debug:
-            print "SOUND: Note " + str(note) + " up on keyboard " + str(keyboard)
+            print "SOUND: Note {} up on keyboard {}".format(note, keyboard)
         self.allkeys[keyboard][note] = 0
 
     def all_off(self):
@@ -168,7 +175,7 @@ class OrganServer:
 
     def transpose(self, t):
         if self.debug:
-            print "SOUND: Transpose by " + str(t)
+            print "SOUND: Transpose by {}".format(t)
         # Copy key state
         oldkeys = copy.deepcopy(self.allkeys)
         # Stop playing existing notes
@@ -194,7 +201,7 @@ if __name__ == "__main__":
     configfile = ""
 
     # noinspection PyUnusedLocal
-    def signal_handler(signal, frame):
+    def signal_handler(sig, frame):
         global DEBUG
         global cont
         if DEBUG:
@@ -260,7 +267,7 @@ if __name__ == "__main__":
         data = message.payload
         starttime = time.time()
         if DEBUG:
-            print "SOUND: %6.3f: " % starttime, message.payload
+            print "SOUND: {:6.3f}: {}".format(starttime, message.payload)
         pieces = data.split()
         while len(pieces) > 0:
             cmd = pieces[0]
@@ -372,7 +379,7 @@ if __name__ == "__main__":
     cont = True
     totaltime = 0.0
     numevents = 0
-    while cont == True:
+    while cont is True:
         # Incoming messages are handled by the mqtt callback
         time.sleep(1)
 
@@ -381,7 +388,7 @@ if __name__ == "__main__":
         mqttclient.disconnect()
         mqttclient.loop_stop()
         if numevents > 0:
-            print "SOUND: Average event process time = %4.2f" % (1000 * totaltime / numevents), "ms"
+            print "SOUND: Average event process time = {:4.2f}ms".format(1000 * totaltime / numevents)
         else:
             print "SOUND: No events received"
     sorgan.cleanup()

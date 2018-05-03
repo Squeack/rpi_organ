@@ -1,5 +1,12 @@
 #!/usr/bin/python
 
+"""
+Copyright (c) 2018 Ian Shatwell
+
+The above copyright notice and the LICENSE file shall be included with
+all distributions of this software
+"""
+
 from IOPi import IOPi
 import time
 import sys
@@ -109,7 +116,7 @@ if __name__ == "__main__":
     configfile = ""
 
     # noinspection PyUnusedLocal
-    def signal_handler(signal, frame):
+    def signal_handler(sig, frame):
         global DEBUG
         global cont
         if DEBUG:
@@ -145,11 +152,11 @@ if __name__ == "__main__":
         global mqttclient
         mqttconnected = False
         if VERBOSE:
-            print("DISPLAY:{} disconnected from MQTT broker. Error {} = {}".format(client, rc, mqtt.error_string(rc)))
+            print("DISPLAY: Disconnected from MQTT broker. Error {} = {}".format(rc, mqtt.error_string(rc)))
         # rc == 0 means disconnect() was called successfully
         if rc != 0:
             if VERBOSE:
-                print("DISPLAY:Reconnect should be automatic")
+                print("DISPLAY: Reconnect should be automatic")
 
     def connect_to_mqtt(broker, port):
         global mqttconnected
@@ -175,7 +182,7 @@ if __name__ == "__main__":
         data = message.payload
         starttime = time.time()
         if DEBUG:
-            print "DISPLAY:  %6.3f: " % starttime, message.payload
+            print "DISPLAY: {:06.3f}: {}".format(starttime, message.payload)
         pieces = data.split()
         stopchange = False
         while len(pieces) > 0:
